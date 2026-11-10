@@ -5,7 +5,7 @@
 设计、安装位置、构建变量都写在 [docs/MACOS.md](../docs/MACOS.md)，这里不重复。
 
 ```bash
-macos/scripts/verify.sh               # 守卫 + cargo test + C ABI 冒烟 + swift test
+macos/scripts/verify.sh               # 守卫 + cargo test + C ABI 冒烟 + swift test + 编译输入法程序
 macos/scripts/build.sh --demo-data    # 开发构建（演示词库）
 macos/scripts/build.sh                # 用 dist/data 的词库构建 build/WowType.app
 macos/scripts/package.sh              # 打 DMG（设了 WOWTYPE_NOTARY_PROFILE 才公证）

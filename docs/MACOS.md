@@ -67,7 +67,7 @@ librime（鼠须管、小狼毫、ibus-rime 共用）和 Mozc 都是这么分的
 需要 Xcode（Swift 6）和 Rust（`rustup target add aarch64-apple-darwin x86_64-apple-darwin`）。
 
 ```bash
-macos/scripts/verify.sh                 # 守卫 + cargo test + C ABI + swift test
+macos/scripts/verify.sh                 # 守卫 + cargo test + C ABI + swift test + 编译输入法程序
 macos/scripts/build.sh                  # 通用二进制（arm64 + x86_64）的 build/WowType.app，临时签名
 macos/scripts/build.sh --install        # 再装到 ~/Library/Input Methods 并启用
 ```

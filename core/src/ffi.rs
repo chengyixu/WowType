@@ -982,6 +982,37 @@ pub unsafe extern "C" fn wowtype_segment_input(
     }
 }
 
+/// 全部默认值的设置文本（静态，不用释放）。
+#[no_mangle]
+pub extern "C" fn wowtype_config_default_ini() -> *const c_char {
+    crate::config::default_ini_c().as_ptr()
+}
+
+/// 把设置文本里和引擎有关的键用到引擎上。返回认不出的行数，出错返回 -1。
+#[no_mangle]
+pub unsafe extern "C" fn wowtype_engine_configure(
+    engine: *mut WowtypeEngineHandle,
+    ini_text: *const c_char,
+) -> c_int {
+    let outcome = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let Some(handle) = (unsafe { engine.as_mut() }) else {
+            set_last_error("engine is null");
+            return -1;
+        };
+        let Some(text) = (unsafe { cstr_to_str(ini_text) }) else {
+            set_last_error("ini text is null or not utf8");
+            return -1;
+        };
+        let (config, bad) = crate::config::parse(text);
+        crate::config::apply_to_engine(&mut handle.engine, &config);
+        bad.min(c_int::MAX as usize) as c_int
+    }));
+    outcome.unwrap_or_else(|_| {
+        set_last_error("panic in wowtype_engine_configure");
+        -1
+    })
+}
+
 /// 最近一次错误。返回的指针在下一次调用本 API 前有效。
 #[no_mangle]
 pub extern "C" fn wowtype_last_error() -> *const c_char {
@@ -997,6 +1028,36 @@ pub extern "C" fn wowtype_version() -> *const c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configure_applies_engine_keys() {
+        let lexicon = CString::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/data/demo_lexicon.tsv"
+        ))
+        .unwrap();
+        let engine = unsafe { wowtype_engine_new(lexicon.as_ptr(), ptr::null()) };
+        assert!(!engine.is_null());
+        let defaults = wowtype_config_default_ini();
+        assert!(!defaults.is_null());
+        assert_eq!(unsafe { wowtype_engine_configure(engine, defaults) }, 0);
+        assert_eq!(unsafe { &*engine }.engine.config().max_candidates, 300);
+        let text =
+            CString::new("Shuangpin=True\nShuangpinScheme=Xiaohe\nBogus=1\nPageSize=99\n").unwrap();
+        assert_eq!(
+            unsafe { wowtype_engine_configure(engine, text.as_ptr()) },
+            2
+        );
+        let config = unsafe { &*engine }.engine.config();
+        assert!(config.shuangpin);
+        assert_eq!(config.shuangpin_scheme, crate::shuangpin::Scheme::Xiaohe);
+        assert_eq!(
+            unsafe { wowtype_engine_configure(ptr::null_mut(), text.as_ptr()) },
+            -1
+        );
+        assert_eq!(unsafe { wowtype_engine_configure(engine, ptr::null()) }, -1);
+        unsafe { wowtype_engine_free(engine) };
+    }
 
     #[test]
     fn new_with_cache_writes_only_into_cache_dir() {

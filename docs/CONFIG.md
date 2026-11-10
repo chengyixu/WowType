@@ -84,12 +84,12 @@ Voice=True
 VoiceKey=Alt_R
 EmojiSuggest=True
 EmojiKey=Super+period
+CheckUpdate=True
 Translate=False
 TranslateTarget=en
 TranslateBaseUrl=
 TranslateModel=
 TranslateFormal=False
-CheckUpdate=True
 ```
 
 | 键 | 取值 |

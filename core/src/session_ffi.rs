@@ -2,7 +2,7 @@
 //!
 //! 和 ffi.rs 一样：NULL 指针返回 0 / NULL / -1（并设 wowtype_last_error），panic 不越过边界。
 //! 返回的字符串由会话保管，在同一会话下一次调用 wowtype_session_* 前有效
-//! （实际上只读的调用不会让之前取的失效，改状态的调用才会）。
+//! （实际上只读的调用不管调多少次都不会让之前取的失效，改状态的调用才会）。
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -33,17 +33,17 @@ pub struct WowtypeSession {
     strings: RefCell<Vec<CString>>,
 }
 
-/// 只读调用一直不断时，存的字符串最多这么多条，满了就从头来。
-const MAX_STRINGS: usize = 1024;
-
 impl WowtypeSession {
     /// 存一份 C 字符串，返回的指针到下一次改状态的调用前都有效。
+    /// 已经存过同样的字符串就给原来那个指针：状态不变时能读到的字符串只有那么几十个
+    /// （编辑区、提示、这一屏的候选和选择键），所以只读调用再多也不会越攒越多，不用清掉。
     fn keep(&self, text: &str) -> *const c_char {
+        let text = text.replace('\0', " ");
         let mut strings = self.strings.borrow_mut();
-        if strings.len() >= MAX_STRINGS {
-            strings.clear();
+        if let Some(found) = strings.iter().find(|s| s.as_bytes() == text.as_bytes()) {
+            return found.as_ptr();
         }
-        strings.push(CString::new(text.replace('\0', " ")).unwrap_or_default());
+        strings.push(CString::new(text).unwrap_or_default());
         strings.last().map_or(ptr::null(), |s| s.as_ptr())
     }
 
@@ -385,6 +385,27 @@ mod tests {
         );
         assert_eq!(text(unsafe { wowtype_session_take_commit(s) }), "ni");
         assert!(unsafe { wowtype_session_take_commit(s) }.is_null());
+        unsafe { wowtype_session_free(s) };
+    }
+
+    #[test]
+    fn many_reads_keep_earlier_strings() {
+        // 前端不按键、一直重画（一屏候选约 72 个字符串）：之前取的指针不能被释放
+        let s = wowtype_session_new();
+        unsafe { wowtype_session_process_key(s, ptr::null_mut(), &press('n')) };
+        let preedit = unsafe { wowtype_session_preedit(s) };
+        // 状态没变时同样的读取给同一个指针（前一个还活着，所以不会碰巧是同一块内存）
+        assert_eq!(unsafe { wowtype_session_preedit(s) }, preedit);
+        for _ in 0..3000 {
+            unsafe {
+                wowtype_session_aux(s);
+                wowtype_session_preedit(s);
+            }
+        }
+        // 存的字符串不随读取次数变多（只有 "n" 和 ""），也就不用清掉
+        assert_eq!(unsafe { (*s).strings.borrow().len() }, 2);
+        assert_eq!(unsafe { wowtype_session_preedit(s) }, preedit);
+        assert_eq!(text(preedit), "n");
         unsafe { wowtype_session_free(s) };
     }
 

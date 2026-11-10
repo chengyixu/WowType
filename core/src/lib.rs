@@ -18,6 +18,7 @@ pub mod lm;
 pub mod nnlm;
 pub mod preedit;
 pub mod rank;
+pub mod session;
 pub mod shuangpin;
 pub mod syllable;
 pub mod symbols;

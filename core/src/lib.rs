@@ -6,6 +6,7 @@
 
 pub mod beam;
 pub mod calc;
+pub mod config;
 pub mod convert;
 pub mod datetime;
 pub mod emoji;
@@ -17,6 +18,8 @@ pub mod lm;
 pub mod nnlm;
 pub mod preedit;
 pub mod rank;
+pub mod session;
+pub mod session_ffi;
 pub mod shuangpin;
 pub mod syllable;
 pub mod symbols;

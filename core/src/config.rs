@@ -327,10 +327,14 @@ fn unquote(value: &str) -> String {
     out
 }
 
-/// 解析设置文本。返回设置和认不出的行数；没写的键用默认值，同一个键写两次以后面的为准。
+/// 解析设置文本。返回设置和认不出的行数；没写的键用默认值。
+/// 同一个键写两次只看最后一行（和 fcitx 一样：先读成键值表，后写的盖掉先写的，再检查取值），
+/// 最后一行不合法就用默认值，前面被盖掉的行不检查。
 pub fn parse(text: &str) -> (Config, usize) {
     let mut config = Config::default();
     let mut bad = 0;
+    // 每个认识的键最后一次写的值，下标和 FIELDS 一致
+    let mut last: Vec<Option<String>> = vec![None; FIELDS.len()];
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
@@ -342,9 +346,16 @@ pub fn parse(text: &str) -> (Config, usize) {
         };
         let key = key.trim();
         let value = unquote(value.trim());
-        match FIELDS.iter().find(|f| f.name == key) {
-            Some(field) if (field.set)(&mut config, &value) => {}
-            _ => bad += 1,
+        match FIELDS.iter().position(|f| f.name == key) {
+            Some(index) => last[index] = Some(value),
+            None => bad += 1,
+        }
+    }
+    for (field, value) in FIELDS.iter().zip(&last) {
+        if let Some(value) = value {
+            if !(field.set)(&mut config, value) {
+                bad += 1;
+            }
         }
     }
     (config, bad)

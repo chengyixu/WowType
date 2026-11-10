@@ -81,8 +81,23 @@ fn ini_syntax() {
     assert_eq!(c.page_size, 5);
     assert_eq!(c.candidate_layout, Layout::Vertical);
     assert_eq!(bad, 2, "没有 = 的行和不认识的键都算认不出");
-    // 同一个键写两次，后面的算数
+    // 同一个键写两次，只看最后一行（fcitx 的 RawConfig 后写的盖掉先写的，再检查取值）：
+    // 最后一行不合法就回到默认值，不留前面合法的那行；前面被盖掉的行不检查
     assert_eq!(config::parse("PageSize=4\nPageSize=6\n").0.page_size, 6);
+    assert_eq!(
+        config::parse("PageSize=7\nPageSize=99\n"),
+        (Config::default(), 1)
+    );
+    assert_eq!(
+        config::parse("PageSize=99\nPageSize=7\n"),
+        (
+            Config {
+                page_size: 7,
+                ..Config::default()
+            },
+            0
+        )
+    );
     // CRLF 也行
     let want = Config {
         page_size: 4,

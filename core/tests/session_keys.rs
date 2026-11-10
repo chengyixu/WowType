@@ -1024,11 +1024,15 @@ fn configure_keeps_composition() {
     // 认不出的行计数，其他键照用
     assert_eq!(
         rig.session
-            .configure("PageSize=7\nNoSuchKey=1\nPageSize=99\n"),
+            .configure("PageSize=7\nNoSuchKey=1\nCandidateLayout=Diagonal\n"),
         2
     );
     rig.session.refresh(rig.engine.as_mut());
     assert_eq!(rig.page().len(), 7);
+    // 同一个键写两次只看最后一行：最后一行不合法就用默认值（和 fcitx 一样），不留前面的 7
+    assert_eq!(rig.session.configure("PageSize=7\nPageSize=99\n"), 1);
+    rig.session.refresh(rig.engine.as_mut());
+    assert_eq!(rig.page().len(), 9);
 }
 
 #[test]

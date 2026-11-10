@@ -751,11 +751,32 @@ fn modifiers_pass_through() {
 
 #[test]
 fn keypad() {
-    // 插件的行为：小键盘数字在编辑中不处理（交给应用），计算器里算数字
+    // 插件的行为：小键盘数字和主键盘数字一样按当前页选词（fcitx 的 Key::isDigit 含 KP_0..KP_9，
+    // KeyEvent 的 normalize 去掉了 NumLock），网格里选光标所在行；计算器里算数字。
+    // 小键盘 + 不是标点也不选词，交给应用（cpp:1583-1590、1396、1684-1710）
     let mut rig = Rig::new();
     rig.ty("shi");
-    assert!(!rig.send(Key::None, Some('1'), mods::KEYPAD));
+    let page = rig.page();
     assert!(!rig.send(Key::None, Some('+'), mods::KEYPAD));
+    assert_eq!(rig.preedit(), "shi");
+    assert!(rig.send(Key::None, Some('2'), mods::KEYPAD));
+    assert_eq!(
+        (
+            rig.committed.as_str(),
+            rig.preedit().as_str(),
+            rig.passed.as_str()
+        ),
+        (page[1].as_str(), "", "+")
+    );
+    rig.fresh();
+    rig.ty("zhi<down>");
+    let grid = rig.page();
+    rig.ty("<down>");
+    assert!(rig.send(Key::None, Some('2'), mods::KEYPAD));
+    assert_eq!(rig.committed, grid[7], "网格里选光标所在行的第 2 个");
+    rig.fresh();
+    rig.ty("shi");
+    assert!(rig.send(Key::None, Some('0'), mods::KEYPAD), "0 吃掉");
     assert_eq!(
         (rig.committed.as_str(), rig.preedit().as_str()),
         ("", "shi")

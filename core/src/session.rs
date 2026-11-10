@@ -329,6 +329,14 @@ impl Sym {
             _ => None,
         }
     }
+
+    /// 数字键（主键盘或小键盘，和 fcitx 的 Key::isDigit 一样）的数字。
+    fn digit(self) -> Option<usize> {
+        match self {
+            Sym::Char(c) | Sym::Keypad(c) => c.to_digit(10).map(|d| d as usize),
+            Sym::Named(_) => None,
+        }
+    }
 }
 
 impl Session {
@@ -458,9 +466,8 @@ impl Session {
             }
             return Some(true);
         }
-        if let Some(digit) = sym.char().and_then(|c| c.to_digit(10)) {
-            // 数字按当前页选词
-            let digit = digit as usize;
+        if let Some(digit) = sym.digit() {
+            // 数字（含小键盘）按当前页选词
             if digit >= 1 && digit <= self.list.page_len() {
                 self.commit_candidate(engine, self.list.page_start() + digit - 1);
             }
@@ -570,6 +577,14 @@ impl Session {
         }
         let screen = GRID_COLS * GRID_ROWS;
         let cursor = self.grid_cursor;
+        if let Some(digit) = sym.digit() {
+            // 数字（含小键盘）选光标所在行的第几个；别的数字吃掉
+            let index = cursor / GRID_COLS * GRID_COLS + digit;
+            if (1..=GRID_COLS).contains(&digit) && index <= n {
+                self.commit_candidate(engine, index - 1);
+            }
+            return true;
+        }
         match sym {
             Sym::Named(Key::Left) => self.grid_cursor = cursor.saturating_sub(1),
             Sym::Named(Key::Right) => self.grid_cursor = (cursor + 1).min(n - 1),
@@ -594,14 +609,6 @@ impl Session {
             }
             Sym::Named(Key::Escape) => self.collapse(),
             Sym::Char(' ') => self.commit_candidate(engine, cursor),
-            Sym::Char(c) if c.is_ascii_digit() => {
-                // 数字选光标所在行的第几个；别的数字吃掉
-                let digit = c as usize - '0' as usize;
-                let index = cursor / GRID_COLS * GRID_COLS + digit;
-                if (1..=GRID_COLS).contains(&digit) && index <= n {
-                    self.commit_candidate(engine, index - 1);
-                }
-            }
             _ => {
                 // 打字、退格、回车、标点：先收起，再照常处理
                 self.collapse();

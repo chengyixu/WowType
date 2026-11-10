@@ -85,7 +85,11 @@ cargo run --release -p wowtype-core --bin wowtype-eval -- --lexicon /tmp/lexicon
 | `core/src/lm.rs` | bigram TSV / ARPA |
 | `core/src/rank.rs` | 23 维特征与线性重排（可训练） |
 | `core/src/lib.rs` | `Engine`：输入→候选、上下文、用户词、自动学习 |
-| `core/src/ffi.rs` | C ABI（插件只用这一层） |
+| `core/src/ffi.rs` | 引擎的 C ABI（fcitx5 插件只用这一层） |
+| `core/src/config.rs` | `wowtype.conf` 的键名、取值和默认值（只此一份）；解析设置文本、套到引擎上 |
+| `core/src/session.rs` | 和平台无关的输入会话：按键 → 编辑串、候选、上屏、自动学习；行为照 fcitx5 插件 |
+| `core/src/session_ffi.rs` | 输入会话的 C ABI（macOS 前端用这一层） |
+| `core/tests/session_keys.rs` | 按键测试：从插件的 `key_harness.cpp` 搬过来，用自带小词库 |
 | `fcitx5-addon/src/wowtype_engine.cpp` | fcitx5 集成：按键、候选、提交 |
 | `voice/src/asr.rs` | 外部识别器调用（`{wav}` 占位符） |
 | `voice/src/sink.rs` | 上屏后端（剪贴板/wtype/ydotool） |

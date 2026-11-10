@@ -144,6 +144,52 @@ private final class Seen: @unchecked Sendable {
     }
 }
 
+@Suite("设置窗口改设置")
+struct SettingsEditorTests {
+    private let defaults = "# 默认\nPageSize=5\nFuzzy=False\n"
+
+    @Test func safeModeShowsDefaultsAndNeverWritesTheUserFile() throws {
+        let store = SettingsStore(directory: try tempDir())
+        let mine = "# 我的\nPageSize=9\nShuangpin=True\n"
+        try store.write(mine)
+        let editor = SettingsEditor(store: store, defaultText: defaults, readOnly: true)
+        #expect(editor.text == defaults)
+        #expect(throws: SettingsEditor.Failure.readOnly) { try editor.set("Fuzzy", "True") }
+        #expect(store.read() == mine)
+    }
+
+    @Test func setStartsFromTheFileNotFromAnOldCopy() throws {
+        let store = SettingsStore(directory: try tempDir())
+        try store.write("PageSize=5\nFuzzy=False\n")
+        let editor = SettingsEditor(store: store, defaultText: defaults, readOnly: false)
+        _ = editor.text  // 窗口打开时读过一次
+        try "# 手改的\nPageSize=7\nFuzzy=False\n".write(to: store.fileURL, atomically: true, encoding: .utf8)
+        let saved = try editor.set("Fuzzy", "True")
+        #expect(saved == "# 手改的\nPageSize=7\nFuzzy=True\n")
+        #expect(store.read() == saved)
+    }
+
+    @Test func missingFileStartsFromDefaults() throws {
+        let store = SettingsStore(directory: try tempDir().appendingPathComponent("WowType"))
+        let editor = SettingsEditor(store: store, defaultText: defaults, readOnly: false)
+        #expect(editor.text == defaults)
+        #expect(try editor.set("PageSize", "7") == "# 默认\nPageSize=7\nFuzzy=False\n")
+        #expect(store.read() == "# 默认\nPageSize=7\nFuzzy=False\n")
+    }
+
+    @Test func sameValueDoesNotRewrite() throws {
+        let dir = try tempDir()
+        let store = SettingsStore(directory: dir)
+        try store.write("PageSize=5\n")
+        let before = try FileManager.default.attributesOfItem(atPath: store.fileURL.path)[.systemFileNumber] as? Int
+        let editor = SettingsEditor(store: store, defaultText: defaults, readOnly: false)
+        #expect(try editor.set("PageSize", "5") == "PageSize=5\n")
+        // 原子写会换掉文件（新的 inode）；没写的话还是原来那个文件。
+        let after = try FileManager.default.attributesOfItem(atPath: store.fileURL.path)[.systemFileNumber] as? Int
+        #expect(before == after)
+    }
+}
+
 @Suite("数据路径")
 struct DataPathsTests {
     @Test func standardLayout() {

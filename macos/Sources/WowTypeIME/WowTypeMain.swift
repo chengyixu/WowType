@@ -31,6 +31,8 @@ final class IMEApp {
     let store: EngineStore
     let settings: SettingsStore
     let customWords: SettingsStore
+    /// 设置窗口读写设置都经过它；安全模式下只读。
+    let settingsEditor: SettingsEditor
     private let server: IMKServer
 
     private init(bundleID: String, paths: DataPaths, safeMode: Bool, server: IMKServer) {
@@ -41,6 +43,7 @@ final class IMEApp {
         self.store = EngineStore(paths: paths, safeMode: safeMode, logger: Log.engine)
         self.settings = SettingsStore(directory: paths.support)
         self.customWords = SettingsStore(directory: paths.support, fileName: paths.custom.lastPathComponent)
+        self.settingsEditor = SettingsEditor(store: settings, defaultText: Engine.defaultIni, readOnly: safeMode)
     }
 
     static func start() {
@@ -93,18 +96,21 @@ final class IMEApp {
         }
     }
 
-    /// 设置窗口改了设置：写文件，再马上用上（自己写的文件不会触发监视回调）。
-    func writeSettings(_ text: String) {
+    /// 设置窗口改了一项：从文件现在的内容改起、写回，再马上用上（自己写的文件不会触发监视回调）。
+    /// 返回改后的全文；安全模式下不改（用户的设置不动），写不进去也返回 nil。
+    func setSetting(_ key: String, _ value: String) -> String? {
         do {
-            try settings.write(text)
+            let text = try settingsEditor.set(key, value)
+            store.apply(settings: text)
+            return text
+        } catch SettingsEditor.Failure.readOnly {
+            Log.app.notice("安全模式下不改设置")
         } catch {
             Log.app.error("设置保存失败: \(error.localizedDescription, privacy: .public)")
         }
-        store.apply(settings: text)
+        return nil
     }
 
-    /// 当前设置全文；没有文件时是核心的默认值。
-    var settingsText: String {
-        safeMode ? Engine.defaultIni : (settings.read() ?? Engine.defaultIni)
-    }
+    /// 当前设置全文（安全模式下是核心的默认值，见 SettingsEditor.text）。
+    var settingsText: String { settingsEditor.text }
 }

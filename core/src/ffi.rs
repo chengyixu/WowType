@@ -75,6 +75,27 @@ pub unsafe extern "C" fn wowtype_engine_new(
     lexicon_tsv_path: *const c_char,
     bigram_tsv_path: *const c_char,
 ) -> *mut WowtypeEngineHandle {
+    unsafe { engine_new_in(lexicon_tsv_path, bigram_tsv_path, None) }
+}
+
+/// 创建引擎，词库快照（.wcache）只写到 cache_dir（NULL/空串时和 wowtype_engine_new 一样）。
+#[no_mangle]
+pub unsafe extern "C" fn wowtype_engine_new_with_cache(
+    lexicon_tsv_path: *const c_char,
+    bigram_tsv_path: *const c_char,
+    cache_dir: *const c_char,
+) -> *mut WowtypeEngineHandle {
+    let cache_dir = unsafe { cstr_to_str(cache_dir) }
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::Path::new);
+    unsafe { engine_new_in(lexicon_tsv_path, bigram_tsv_path, cache_dir) }
+}
+
+unsafe fn engine_new_in(
+    lexicon_tsv_path: *const c_char,
+    bigram_tsv_path: *const c_char,
+    cache_dir: Option<&std::path::Path>,
+) -> *mut WowtypeEngineHandle {
     let lexicon_path = match unsafe { cstr_to_str(lexicon_tsv_path) } {
         Some(path) if !path.is_empty() => path,
         _ => {
@@ -83,20 +104,25 @@ pub unsafe extern "C" fn wowtype_engine_new(
         }
     };
 
-    let result = (|| -> anyhow::Result<Engine> {
-        let lexicon = MemoryLexicon::from_tsv_path_cached(lexicon_path)?;
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| -> anyhow::Result<Engine> {
+        let (lexicon, _) =
+            MemoryLexicon::load_cached_in(std::path::Path::new(lexicon_path), cache_dir)?;
         let lexicon: Arc<dyn Lexicon> = Arc::new(lexicon);
         let lm: Arc<dyn LanguageModel> = match unsafe { cstr_to_str(bigram_tsv_path) } {
             Some(path) if !path.is_empty() => crate::lm::load_lm(path)?,
             _ => Arc::new(BigramLm::default()),
         };
         Ok(Engine::new(lexicon, lm))
-    })();
+    }));
 
     match result {
-        Ok(engine) => Box::into_raw(Box::new(WowtypeEngineHandle { engine })),
-        Err(error) => {
+        Ok(Ok(engine)) => Box::into_raw(Box::new(WowtypeEngineHandle { engine })),
+        Ok(Err(error)) => {
             set_last_error(format!("{error:#}"));
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("Rust panic while creating engine");
             ptr::null_mut()
         }
     }
@@ -971,6 +997,56 @@ pub extern "C" fn wowtype_version() -> *const c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_with_cache_writes_only_into_cache_dir() {
+        let base = std::env::temp_dir().join(format!("wowtype_ffi_cache_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let lex_dir = base.join("app");
+        let cache_dir = base.join("caches");
+        std::fs::create_dir_all(&lex_dir).unwrap();
+        let lexicon = lex_dir.join("lexicon.tsv");
+        std::fs::write(&lexicon, "ni hao\t你好\t100\n").unwrap();
+        let lex_c = CString::new(lexicon.to_str().unwrap()).unwrap();
+        let cache_c = CString::new(cache_dir.to_str().unwrap()).unwrap();
+        for _ in 0..2 {
+            let engine = unsafe {
+                wowtype_engine_new_with_cache(lex_c.as_ptr(), ptr::null(), cache_c.as_ptr())
+            };
+            assert!(!engine.is_null());
+            let input = CString::new("nihao").unwrap();
+            let c = unsafe { wowtype_engine_input(engine, input.as_ptr()) };
+            let first = unsafe { CStr::from_ptr(wowtype_candidates_text(c, 0)) };
+            assert_eq!(first.to_str().unwrap(), "你好");
+            unsafe {
+                wowtype_candidates_free(c);
+                wowtype_engine_free(engine);
+            }
+            assert_eq!(
+                std::fs::read_dir(&lex_dir).unwrap().count(),
+                1,
+                "词库旁边不该写快照"
+            );
+            let snapshots = std::fs::read_dir(&cache_dir)
+                .unwrap()
+                .filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_some_and(|x| x == "wcache")
+                })
+                .count();
+            assert_eq!(snapshots, 1);
+        }
+        // cache_dir 为空串时和 wowtype_engine_new 一样
+        let empty = CString::new("").unwrap();
+        let engine =
+            unsafe { wowtype_engine_new_with_cache(lex_c.as_ptr(), ptr::null(), empty.as_ptr()) };
+        assert!(!engine.is_null());
+        unsafe { wowtype_engine_free(engine) };
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn ffi_roundtrip() {

@@ -21,14 +21,14 @@ thread_local! {
         RefCell::new(CString::new("no error").expect("static error string"));
 }
 
-fn set_last_error(message: impl Into<String>) {
+pub(crate) fn set_last_error(message: impl Into<String>) {
     let text = message.into().replace('\0', " ");
     let value = CString::new(text)
         .unwrap_or_else(|_| CString::new("unknown error").expect("static error string"));
     LAST_ERROR.with(|slot| *slot.borrow_mut() = value);
 }
 
-unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Option<&'a str> {
+pub(crate) unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Option<&'a str> {
     if ptr.is_null() {
         return None;
     }
@@ -37,7 +37,7 @@ unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Option<&'a str> {
 
 /// 引擎句柄。
 pub struct WowtypeEngineHandle {
-    engine: Engine,
+    pub(crate) engine: Engine,
 }
 
 /// 一次输入产生的候选集合（预测结果也用这个结构承载）。

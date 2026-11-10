@@ -39,7 +39,8 @@ librime（鼠须管、小狼毫、ibus-rime 共用）和 Mozc 都是这么分的
 | 情况 | 做法 | 理由 |
 |---|---|---|
 | 应用调 `commitComposition`（点了别处等） | 已选的词 + 原始字母上屏 | 不丢用户打的字；鼠须管、vChewing 也这么做 |
-| `deactivateServer`（切走输入框或切输入法） | 同上，然后关候选框 | macOS 分不清这两种情况，宁可上屏也不丢 |
+| `deactivateServer`（切走输入框或切输入法） | 同上，然后关候选框；`take_save_request` 返回 1 就存盘 | macOS 分不清这两种情况，宁可上屏也不丢；插件在 deactivate 时把没存的学习存盘 |
+| 多个输入框 | 每个输入框一个会话；中英文模式、上文、学习计数同一线程上的会话共用 | 和插件一样全局生效（插件里这些是插件对象的成员） |
 | `activateServer` | 清空状态 | 和 Linux 的 activate 一样 |
 | Command 组合键 | 交给应用，编辑区保留 | 和 Linux 的 Ctrl/Alt/Super 一样 |
 | 密码框（安全输入） | 系统不把按键交给输入法，不用处理 | |

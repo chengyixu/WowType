@@ -265,6 +265,11 @@ impl Rig {
         self.event(key, None, mods::SHIFT, true)
     }
 
+    /// 换成另一个会话（像切到另一个应用的输入框），引擎和上屏记录不变。
+    fn swap(&mut self, other: &mut Session) {
+        std::mem::swap(&mut self.session, other);
+    }
+
     fn history(&self, word: &str) -> u32 {
         self.engine.as_ref().unwrap().history_count(word)
     }
@@ -900,6 +905,90 @@ fn save_request_every_20_learning_commits() {
     }
     assert_eq!(bare.committed, "ni".repeat(25));
     assert!(!bare.session.take_save_request());
+}
+
+#[test]
+fn shared_state_across_sessions() {
+    // 插件里中英文模式、上文、学习计数是插件对象的成员，所有输入框共用
+    // （wowtype_engine.h:314-335），只有编辑区、候选是每个输入框自己的
+    let mut rig = Rig::new();
+    let mut other = Session::in_group(&rig.session.group());
+    // 在一个输入框里单按 Shift 切英文，别的输入框也是英文
+    assert!(rig.tap_shift(Key::ShiftR, 50));
+    assert_eq!(other.mode(), Mode::Ascii);
+    rig.swap(&mut other);
+    assert!(!rig.ch('a'), "另一个输入框里字母也交给应用");
+    assert!(rig.tap_shift(Key::ShiftR, 50));
+    rig.swap(&mut other);
+    assert_eq!(rig.session.mode(), Mode::Chinese, "切回中文也一起");
+
+    // 上文是全局的：在一个输入框上屏，另一个输入框算候选时接着用
+    rig.ty("wo<sp>");
+    rig.swap(&mut other);
+    rig.ty("ni");
+    assert_eq!(rig.engine.as_ref().unwrap().context(), "我");
+    assert_eq!(rig.preedit(), "ni", "编辑区各管各的");
+    rig.swap(&mut other);
+    assert_eq!(rig.preedit(), "");
+    rig.swap(&mut other);
+    rig.ty("<esc>");
+    rig.swap(&mut other);
+
+    // 学习计数是全局的：两个输入框各 10 次（加上面的 1 次）也凑够 20 次
+    for _ in 0..9 {
+        rig.ty("nihao<sp>");
+    }
+    rig.swap(&mut other);
+    for _ in 0..9 {
+        rig.ty("nihao<sp>");
+    }
+    assert!(!rig.session.take_save_request());
+    rig.swap(&mut other);
+    rig.ty("nihao<sp>");
+    rig.swap(&mut other);
+    assert!(rig.session.take_save_request(), "哪个会话都能取到");
+    rig.swap(&mut other);
+    assert!(!rig.session.take_save_request(), "取一次就清零");
+
+    // 不在一组的会话互不影响
+    let mut alone = Session::new();
+    assert!(rig.tap_shift(Key::ShiftR, 50));
+    assert_eq!(alone.mode(), Mode::Chinese);
+    assert!(!alone.take_save_request());
+}
+
+#[test]
+fn save_request_on_focus_loss_and_im_switch() {
+    // 插件 deactivate（失去焦点、切换输入法）时有没存的学习就存盘（cpp:1805 maybeSaveUserDict(true)）
+    let mut rig = Rig::new();
+    rig.ty("nihao<sp>");
+    assert!(!rig.session.take_save_request());
+    rig.session.reset();
+    assert!(
+        rig.session.take_save_request(),
+        "失去焦点：有 1 次没存的学习"
+    );
+    rig.session.reset();
+    assert!(!rig.session.take_save_request(), "没有没存的学习就不要求");
+    rig.ty("nihao");
+    rig.session.commit_composition(rig.engine.as_mut());
+    rig.collect();
+    assert_eq!(rig.committed, "你好nihao");
+    assert!(
+        rig.session.take_save_request(),
+        "切换输入法：原始字母上屏也算一次学习，存盘"
+    );
+    rig.session.commit_composition(rig.engine.as_mut());
+    assert!(!rig.session.take_save_request());
+    // 标点不算学习
+    rig.ty(",");
+    rig.session.reset();
+    assert!(!rig.session.take_save_request());
+    // 另一个会话学的、这个会话失去焦点时也存（计数是全局的）
+    let mut other = Session::in_group(&rig.session.group());
+    rig.ty("nihao<sp>");
+    other.reset();
+    assert!(rig.session.take_save_request());
 }
 
 #[test]

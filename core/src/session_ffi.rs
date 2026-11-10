@@ -3,6 +3,9 @@
 //! 和 ffi.rs 一样：NULL 指针返回 0 / NULL / -1（并设 wowtype_last_error），panic 不越过边界。
 //! 返回的字符串由会话保管，在同一会话下一次调用 wowtype_session_* 前有效
 //! （实际上只读的调用不管调多少次都不会让之前取的失效，改状态的调用才会）。
+//!
+//! 同一线程上建的会话是一组（共用中英文模式、上文和学习计数，见 session.rs 的 SessionGroup）：
+//! 会话本来就只在一个线程上用，前端每个输入框一个会话，这样就和插件一样全局生效。
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -12,7 +15,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 
 use crate::ffi::{cstr_to_str, set_last_error, WowtypeEngineHandle};
-use crate::session::{Key, KeyEvent, Session};
+use crate::session::{Key, KeyEvent, Session, SessionGroup};
 use crate::Engine;
 
 /// 和头文件里的 WowtypeKeyEvent 一致。
@@ -53,6 +56,11 @@ impl WowtypeSession {
     }
 }
 
+thread_local! {
+    /// 这个线程上建的会话所在的组。
+    static GROUP: SessionGroup = SessionGroup::default();
+}
+
 /// panic 不越过 C 边界：出 panic 时记下错误，返回 fallback。
 fn guard<T>(what: &str, fallback: T, f: impl FnOnce() -> T) -> T {
     match panic::catch_unwind(AssertUnwindSafe(f)) {
@@ -88,7 +96,7 @@ fn flag(on: bool) -> c_int {
 pub extern "C" fn wowtype_session_new() -> *mut WowtypeSession {
     guard("wowtype_session_new", ptr::null_mut(), || {
         Box::into_raw(Box::new(WowtypeSession {
-            session: Session::new(),
+            session: GROUP.with(Session::in_group),
             strings: RefCell::new(Vec::new()),
         }))
     })
@@ -407,6 +415,53 @@ mod tests {
         assert_eq!(unsafe { wowtype_session_preedit(s) }, preedit);
         assert_eq!(text(preedit), "n");
         unsafe { wowtype_session_free(s) };
+    }
+
+    fn shift_r(release: bool) -> WowtypeKeyEvent {
+        WowtypeKeyEvent {
+            key: 21,
+            unicode: 0,
+            modifiers: if release { 1 } else { 0 },
+            is_release: c_int::from(release),
+            ..press('\0')
+        }
+    }
+
+    #[test]
+    fn sessions_on_one_thread_share_the_mode() {
+        // 照插件：中英文模式全局生效。前端每个输入框一个会话，同一线程上的会话共用它
+        let a = wowtype_session_new();
+        let b = wowtype_session_new();
+        unsafe {
+            wowtype_session_process_key(a, ptr::null_mut(), &shift_r(false));
+            assert_eq!(
+                wowtype_session_process_key(a, ptr::null_mut(), &shift_r(true)),
+                1
+            );
+            assert_eq!(wowtype_session_mode(a), 1);
+            assert_eq!(wowtype_session_mode(b), 1, "另一个会话也是英文");
+            assert_eq!(
+                wowtype_session_process_key(b, ptr::null_mut(), &press('n')),
+                0
+            );
+        }
+        // 别的线程上的会话是另一组
+        let elsewhere = std::thread::spawn(|| {
+            let c = wowtype_session_new();
+            let mode = unsafe { wowtype_session_mode(c) };
+            unsafe { wowtype_session_free(c) };
+            mode
+        });
+        assert_eq!(elsewhere.join().unwrap(), 0);
+        unsafe {
+            wowtype_session_free(a);
+            // 先建的会话释放了，后建的照样用这一组的状态
+            assert_eq!(wowtype_session_mode(b), 1);
+            let c = wowtype_session_new();
+            assert_eq!(wowtype_session_mode(c), 1);
+            wowtype_session_free(b);
+            wowtype_session_free(c);
+        }
     }
 
     #[test]

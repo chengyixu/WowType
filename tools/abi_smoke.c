@@ -188,8 +188,11 @@ static void session_smoke(void) {
     /* commit_composition：已选的词 + 原始字母上屏 */
     wowtype_session_commit_composition(s, e);
     check(commit_is(s, "你好zhongguo"), "session: commit_composition 上屏已选 + 原始字母");
+    check(wowtype_session_take_save_request(s) == 1,
+          "session: commit_composition 时有没存的学习就要求存盘");
     wowtype_session_commit_composition(s, e);
-    check(commit_is(s, NULL), "session: 没在编辑时 commit_composition 什么也不做");
+    check(commit_is(s, NULL) && wowtype_session_take_save_request(s) == 0,
+          "session: 没在编辑时 commit_composition 什么也不做");
 
     /* 翻页和选择键 */
     check(wowtype_session_configure(s, "PageSize=3\nEmojiSuggest=False\n") == 0,
@@ -239,6 +242,7 @@ static void session_smoke(void) {
     check(!wowtype_session_is_composing(s) && commit_is(s, NULL) &&
               text_is(wowtype_session_preedit(s), "") && wowtype_session_candidate_count(s) == 0,
           "session_reset: 清空、不上屏");
+    check(wowtype_session_take_save_request(s) == 1, "session_reset: 有没存的学习就要求存盘");
 
     /* 词库还在加载：引擎为 NULL 时字母照样进编辑区，refresh 后出候选 */
     session_type(s, NULL, "nihao");
@@ -263,6 +267,11 @@ static void session_smoke(void) {
                   wowtype_session_mode(s) == WOWTYPE_MODE_ASCII,
               "session: 单按右 Shift 切英文");
         check(session_key(s, e, WOWTYPE_KEY_NONE, 'a', 0) == 0, "session: 英文时字母交给应用");
+        /* 同一线程上的会话共用中英文模式（照插件，全局生效） */
+        WowtypeSession *other = wowtype_session_new();
+        check(other && wowtype_session_mode(other) == WOWTYPE_MODE_ASCII,
+              "session: 另一个会话也是英文");
+        wowtype_session_free(other);
         ev.is_release = 0;
         ev.modifiers = 0;
         ev.time_ms = (session_now += 10);

@@ -279,6 +279,8 @@ int wowtype_engine_configure(WowtypeEngineHandle *engine, const char *ini_text);
  * 前端只负责把系统按键翻译成 WowtypeKeyEvent、把下面的输出画出来、把上屏文字交给应用。
  *
  * 线程：会话和引擎只在同一个线程上用（macOS 是主线程）。一个引擎可以给多个会话共用。
+ * 同一线程上建的会话共用中英文模式、最近上屏的上文和学习计数：照 fcitx5 插件，这几样对所有输入框
+ * 全局生效（在一个应用里切成英文，别的应用也是英文）。编辑区和候选是每个会话自己的。
  * engine 每次调用时传入，可为 NULL（词库还在加载）：这时字母照样进编辑区，只是没有候选。
  * 返回的字符串指针在同一会话下一次调用 wowtype_session_* 前有效。
  *
@@ -362,11 +364,12 @@ int wowtype_session_select(WowtypeSession *session, WowtypeEngineHandle *engine,
 /* 鼠标滚轮/翻页按钮：delta < 0 上一页，> 0 下一页。返回 1 翻了，0 已经到头。 */
 int wowtype_session_page(WowtypeSession *session, int delta);
 
-/* 焦点离开、应用要求重置：丢掉编辑中的内容，什么也不上屏。 */
+/* 焦点离开、应用要求重置：丢掉编辑中的内容，什么也不上屏。
+ * 之后有没存的学习时 wowtype_session_take_save_request 返回 1（插件失去焦点时存盘）。 */
 void wowtype_session_reset(WowtypeSession *session);
 
 /* 切换输入法、应用要求结束编辑（macOS 的 commitComposition）：已选的词 + 剩下的原始字母上屏，
- * 然后清空。没在编辑时什么也不做。 */
+ * 然后清空。没在编辑时不上屏。之后有没存的学习时 wowtype_session_take_save_request 返回 1。 */
 void wowtype_session_commit_composition(WowtypeSession *session, WowtypeEngineHandle *engine);
 
 /* 自上次调用以来要上屏的文字（可能是好几次上屏连在一起），没有时返回 NULL。取一次就清空。 */
@@ -401,8 +404,10 @@ int wowtype_session_has_next_page(const WowtypeSession *session);
 /* WOWTYPE_MODE_*。 */
 int wowtype_session_mode(const WowtypeSession *session);
 
-/* 学到的东西攒够了（每 20 次学习）时返回 1 并清零，前端这时把用户词库和输入习惯存盘
- * （wowtype_engine_save_user_dict / wowtype_engine_save_history）。 */
+/* 要求存盘时返回 1 并清零，前端这时把用户词库和输入习惯存盘
+ * （wowtype_engine_save_user_dict / wowtype_engine_save_history）。要求存盘的时候：
+ * 同一线程上的会话一共学够 20 次；reset / commit_composition 时还有没存的学习。
+ * 哪个会话取到都一样（同一线程上共用）。 */
 int wowtype_session_take_save_request(WowtypeSession *session);
 
 

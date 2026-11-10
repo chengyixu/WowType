@@ -6,6 +6,12 @@
 //! 这一版不含互译、语音、表情面板。
 //!
 //! 引擎每次调用时传入，可为 None（词库还在加载）：字母照样进编辑区，只是没有候选。
+//!
+//! 中英文模式、最近上屏的上文、学习计数在插件里是插件对象的成员，所有输入框共用
+//! （wowtype_engine.h:314-335）；这里放在 [`SessionGroup`] 里，同一组的会话共用。
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::config::{self, Config, Layout, SelectKeys, ShiftToggle};
 use crate::datetime::LocalTime;
@@ -117,8 +123,9 @@ pub struct KeyEvent {
 }
 
 /// 中文还是英文（英文时按键直接交给应用）。数值和 C ABI 的 WOWTYPE_MODE_* 一致。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
+    #[default]
     Chinese = 0,
     Ascii = 1,
 }
@@ -269,10 +276,26 @@ impl List {
     }
 }
 
+/// 同一组会话共用的状态。
+#[derive(Debug, Default)]
+struct Shared {
+    mode: Mode,
+    /// 最近上屏的文字，给引擎当上文。
+    recent: String,
+    /// 距离上次要求存盘学了几次。
+    unsaved: u32,
+    save_requested: bool,
+}
+
+/// 一组共用中英文模式、上文和学习计数的会话（照插件：这些对所有输入框全局生效）。
+/// 复制出来的还是同一组。
+#[derive(Clone, Debug, Default)]
+pub struct SessionGroup(Rc<RefCell<Shared>>);
+
 /// 一个输入框的输入状态。
 pub struct Session {
     config: Config,
-    mode: Mode,
+    group: SessionGroup,
     /// 打的全部字母（含已选句首词用掉的部分）。
     buffer: String,
     selections: Vec<Selection>,
@@ -283,14 +306,10 @@ pub struct Session {
     /// 重建列表时的光标（网格收起时带回来）。
     panel_cursor: usize,
     list: List,
-    /// 最近上屏的文字，给引擎当上文。
-    recent: String,
     /// 还没交给前端的上屏文字。
     commit: String,
     preedit: String,
     plain_len: usize,
-    unsaved: u32,
-    save_requested: bool,
     shift_down: Option<Key>,
     shift_down_at: i64,
     /// 最近一次按键的时刻和时区，日期时间候选用。
@@ -340,10 +359,16 @@ impl Sym {
 }
 
 impl Session {
+    /// 自己一组的会话。
     pub fn new() -> Self {
+        Self::in_group(&SessionGroup::default())
+    }
+
+    /// 加进 `group` 的会话：和组里别的会话共用中英文模式、上文和学习计数。
+    pub fn in_group(group: &SessionGroup) -> Self {
         Self {
             config: Config::default(),
-            mode: Mode::Chinese,
+            group: group.clone(),
             buffer: String::new(),
             selections: Vec::new(),
             candidates: Vec::new(),
@@ -351,17 +376,19 @@ impl Session {
             grid_cursor: 0,
             panel_cursor: 0,
             list: List::default(),
-            recent: String::new(),
             commit: String::new(),
             preedit: String::new(),
             plain_len: 0,
-            unsaved: 0,
-            save_requested: false,
             shift_down: None,
             shift_down_at: 0,
             time_ms: 0,
             utc_offset_seconds: 0,
         }
+    }
+
+    /// 这个会话所在的组（拿去建同组的会话）。
+    pub fn group(&self) -> SessionGroup {
+        self.group.clone()
     }
 
     /// 读入设置文本，只用和会话有关的键（候选排列、每页几个、选择键、单按 Shift、日期时间、
@@ -370,7 +397,7 @@ impl Session {
         let (config, bad) = config::parse(ini);
         self.config = config;
         if self.config.shift_toggle == ShiftToggle::Off {
-            self.mode = Mode::Chinese;
+            self.shared().mode = Mode::Chinese;
         }
         bad
     }
@@ -386,7 +413,7 @@ impl Session {
         if ev.is_release {
             return false;
         }
-        if self.mode == Mode::Ascii && !self.composing() {
+        if self.mode() == Mode::Ascii && !self.composing() {
             return false;
         }
         // 带 Ctrl/Alt/Super 的组合键交给应用，编辑区保留
@@ -671,16 +698,20 @@ impl Session {
     }
 
     /// 焦点离开、应用要求重置：丢掉编辑中的内容，什么也不上屏。
+    /// 有没存的学习时要求存盘（插件的 deactivate 会存盘）。
     pub fn reset(&mut self) {
         self.clear();
+        self.request_save_if_unsaved();
     }
 
     /// 切换输入法、应用要求结束编辑：已选的词 + 剩下的原始字母上屏，然后清空。
+    /// 有没存的学习时要求存盘（插件的 deactivate 会存盘）。
     pub fn commit_composition(&mut self, engine: Option<&mut Engine>) {
         if self.composing() {
             let tail = self.remaining();
             self.commit_all(engine.map(|e| &*e), &tail, "");
         }
+        self.request_save_if_unsaved();
     }
 
     /// 自上次调用以来要上屏的文字，没有时 None。取一次就清空。
@@ -798,16 +829,30 @@ impl Session {
         }
     }
 
+    /// 中英文模式（同一组的会话共用）。
     pub fn mode(&self) -> Mode {
-        self.mode
+        self.group.0.borrow().mode
     }
 
-    /// 学够 20 次时返回 true 并清零，前端这时把用户词库和输入习惯存盘。
+    /// 要求存盘时返回 true 并清零，前端这时把用户词库和输入习惯存盘。要求存盘的时候：
+    /// 同一组的会话一共学够 20 次；`reset` / `commit_composition` 时还有没存的学习。
     pub fn take_save_request(&mut self) -> bool {
-        std::mem::take(&mut self.save_requested)
+        std::mem::take(&mut self.shared().save_requested)
     }
 
     // ---- 内部 ----
+
+    fn shared(&self) -> std::cell::RefMut<'_, Shared> {
+        self.group.0.borrow_mut()
+    }
+
+    fn request_save_if_unsaved(&mut self) {
+        let mut shared = self.shared();
+        if shared.unsaved > 0 {
+            shared.unsaved = 0;
+            shared.save_requested = true;
+        }
+    }
 
     fn composing(&self) -> bool {
         !self.buffer.is_empty()
@@ -918,10 +963,8 @@ impl Session {
 
     fn fill_candidates(&mut self, engine: &Engine, input: &str) {
         // 已经选了开头的词时，把它当上文，剩下的部分排序更准
-        engine.set_context(&utf8_tail(
-            &(self.recent.clone() + &self.selected_text()),
-            CONTEXT_BYTES,
-        ));
+        let recent = self.shared().recent.clone();
+        engine.set_context(&utf8_tail(&(recent + &self.selected_text()), CONTEXT_BYTES));
         self.candidates = engine
             .input(input)
             .into_iter()
@@ -1094,13 +1137,14 @@ impl Session {
                 pinyin.push_str(tail_pinyin);
                 engine.record_selection_with_pinyin(&text, Some(&pinyin));
             }
-            self.unsaved += 1;
+            self.shared().unsaved += 1;
         }
         self.clear();
         self.remember_context(engine, &text);
-        if self.unsaved >= SAVE_EVERY {
-            self.unsaved = 0;
-            self.save_requested = true;
+        let mut shared = self.shared();
+        if shared.unsaved >= SAVE_EVERY {
+            shared.unsaved = 0;
+            shared.save_requested = true;
         }
     }
 
@@ -1117,9 +1161,10 @@ impl Session {
     }
 
     fn remember_context(&mut self, engine: Option<&Engine>, text: &str) {
-        self.recent = utf8_tail(&(self.recent.clone() + text), CONTEXT_BYTES);
+        let mut shared = self.shared();
+        shared.recent = utf8_tail(&(shared.recent.clone() + text), CONTEXT_BYTES);
         if let Some(engine) = engine {
-            engine.set_context(&self.recent);
+            engine.set_context(&shared.recent);
         }
     }
 
@@ -1151,10 +1196,10 @@ impl Session {
         if ev.time_ms - self.shift_down_at > SHIFT_TAP_MS {
             return false;
         }
-        if self.mode == Mode::Ascii {
-            self.mode = Mode::Chinese;
+        if self.mode() == Mode::Ascii {
+            self.shared().mode = Mode::Chinese;
         } else {
-            self.mode = Mode::Ascii;
+            self.shared().mode = Mode::Ascii;
             if self.composing() {
                 // 打到一半切英文：已选的词 + 打的字母原样上屏
                 let tail = self.remaining();

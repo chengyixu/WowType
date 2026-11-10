@@ -253,6 +253,155 @@ const char *wowtype_translate_error(const WowtypeTranslator *translator);
 /* 面板上的方向标签（「中→英」「英→中」），按 text 判断；下一次调用前有效。 */
 const char *wowtype_translate_tag(WowtypeTranslator *translator, const char *text);
 
+/*
+ * 引擎缓存目录：词库快照（.wcache）只写到这个目录，不再试词库旁边。
+ * 词库放在只读或带签名的位置（macOS 的 .app 包、/usr/share）时用它，免得改动签过名的包。
+ * cache_dir 为 NULL 或空串时和 wowtype_engine_new 一样。失败返回 NULL。
+ */
+WowtypeEngineHandle *wowtype_engine_new_with_cache(const char *lexicon_tsv_path,
+                                                   const char *bigram_tsv_path,
+                                                   const char *cache_dir);
+
+/*
+ * 设置文本：和 wowtype.conf 同一种格式（一行 Key=Value，# 开头是注释，可以有 [节] 行，忽略），
+ * 键名、取值、默认值见 docs/CONFIG.md。没写的键用默认值。
+ *
+ * wowtype_config_default_ini 给出全部默认值（静态字符串，不用释放），前端第一次写设置文件用它。
+ * wowtype_engine_configure 把和引擎有关的键用到引擎上：Fuzzy、Fuzzy*、TypoCorrection、Shuangpin、
+ * ShuangpinScheme、Traditional（简繁表要先用 wowtype_engine_load_conversion 载入）。
+ * 两个函数都返回认不出的行数（键名不认识或取值不合法，按默认值处理），出错返回 -1。
+ */
+const char *wowtype_config_default_ini(void);
+int wowtype_engine_configure(WowtypeEngineHandle *engine, const char *ini_text);
+
+/*
+ * 输入会话：按键处理、编辑区、候选翻页、上屏和学习，和平台无关，各平台前端共用一份。
+ * 前端只负责把系统按键翻译成 WowtypeKeyEvent、把下面的输出画出来、把上屏文字交给应用。
+ *
+ * 线程：会话和引擎只在同一个线程上用（macOS 是主线程）。一个引擎可以给多个会话共用。
+ * engine 每次调用时传入，可为 NULL（词库还在加载）：这时字母照样进编辑区，只是没有候选。
+ * 返回的字符串指针在同一会话下一次调用 wowtype_session_* 前有效。
+ *
+ * 行为和 fcitx5 插件一致（按键表见 docs/MACOS.md），这一版不含：互译、语音、表情面板。
+ */
+typedef struct WowtypeSession WowtypeSession;
+
+/* 具名键。打出字符的键（字母、数字、标点、空格）填 WOWTYPE_KEY_NONE，字符放在 unicode 里。 */
+enum {
+    WOWTYPE_KEY_NONE = 0,
+    WOWTYPE_KEY_BACKSPACE = 1,
+    WOWTYPE_KEY_RETURN = 2,      /* 小键盘回车：RETURN + WOWTYPE_MOD_KEYPAD */
+    WOWTYPE_KEY_ESCAPE = 3,
+    WOWTYPE_KEY_TAB = 4,
+    WOWTYPE_KEY_DELETE = 5,      /* 向前删除 */
+    WOWTYPE_KEY_LEFT = 6,
+    WOWTYPE_KEY_RIGHT = 7,
+    WOWTYPE_KEY_UP = 8,
+    WOWTYPE_KEY_DOWN = 9,
+    WOWTYPE_KEY_HOME = 10,
+    WOWTYPE_KEY_END = 11,
+    WOWTYPE_KEY_PAGE_UP = 12,
+    WOWTYPE_KEY_PAGE_DOWN = 13,
+    WOWTYPE_KEY_SHIFT_L = 20,    /* 单独的修饰键按下/松开（macOS 的 flagsChanged） */
+    WOWTYPE_KEY_SHIFT_R = 21,
+    WOWTYPE_KEY_CONTROL_L = 22,
+    WOWTYPE_KEY_CONTROL_R = 23,
+    WOWTYPE_KEY_ALT_L = 24,      /* macOS 的 Option */
+    WOWTYPE_KEY_ALT_R = 25,
+    WOWTYPE_KEY_SUPER_L = 26,    /* macOS 的 Command */
+    WOWTYPE_KEY_SUPER_R = 27,
+    WOWTYPE_KEY_CAPS_LOCK = 28,
+    WOWTYPE_KEY_OTHER = 99,      /* 别的功能键（F1……）：编辑中吞掉，没在编辑时交给应用 */
+};
+
+/* 按键时按着的修饰键（位掩码）。 */
+enum {
+    WOWTYPE_MOD_SHIFT = 1,
+    WOWTYPE_MOD_CONTROL = 2,
+    WOWTYPE_MOD_ALT = 4,         /* macOS 的 Option */
+    WOWTYPE_MOD_SUPER = 8,       /* macOS 的 Command */
+    WOWTYPE_MOD_KEYPAD = 16,     /* 小键盘上的键 */
+    WOWTYPE_MOD_CAPS_LOCK = 32,
+};
+
+typedef struct WowtypeKeyEvent {
+    unsigned int struct_size;    /* 填 sizeof(WowtypeKeyEvent)；以后加字段时靠它兼容 */
+    unsigned int key;            /* WOWTYPE_KEY_* */
+    unsigned int unicode;        /* 这个键在当前修饰键下打出的字符（Shift+a 是 'A'），没有填 0 */
+    unsigned int modifiers;      /* WOWTYPE_MOD_* */
+    int is_release;              /* 1 松开，0 按下（含自动重复） */
+    int utc_offset_seconds;      /* 本地时区和 UTC 的差（东八区 28800），日期时间候选用 */
+    long long time_ms;           /* 按键时刻，Unix 毫秒；单按 Shift 的计时和日期时间候选用 */
+} WowtypeKeyEvent;
+
+enum {
+    WOWTYPE_MODE_CHINESE = 0,
+    WOWTYPE_MODE_ASCII = 1,      /* 英文：按键直接交给应用 */
+};
+
+WowtypeSession *wowtype_session_new(void);
+void wowtype_session_free(WowtypeSession *session);
+
+/* 读入设置文本（格式同 wowtype_engine_configure），只取和会话有关的键：CandidateLayout、PageSize、
+ * SelectKeys、ShiftToggle、DateTime、Calculator、EmojiSuggest、Shuangpin、ShuangpinScheme。
+ * 正在编辑时不清空编辑区。返回认不出的行数，出错返回 -1。 */
+int wowtype_session_configure(WowtypeSession *session, const char *ini_text);
+
+/* 处理一个按键。返回 1 表示会话用掉了这个键（前端不要再交给应用），0 表示交给应用。
+ * 之后用下面的函数取上屏文字、编辑区和候选。 */
+int wowtype_session_process_key(WowtypeSession *session, WowtypeEngineHandle *engine,
+                                const WowtypeKeyEvent *event);
+
+/* 鼠标点选这一屏的第 index 个候选（和按对应数字键一样）。返回 1 成功，0 没有这个候选。 */
+int wowtype_session_select(WowtypeSession *session, WowtypeEngineHandle *engine, size_t index);
+
+/* 鼠标滚轮/翻页按钮：delta < 0 上一页，> 0 下一页。返回 1 翻了，0 已经到头。 */
+int wowtype_session_page(WowtypeSession *session, int delta);
+
+/* 焦点离开、应用要求重置：丢掉编辑中的内容，什么也不上屏。 */
+void wowtype_session_reset(WowtypeSession *session);
+
+/* 切换输入法、应用要求结束编辑（macOS 的 commitComposition）：已选的词 + 剩下的原始字母上屏，
+ * 然后清空。没在编辑时什么也不做。 */
+void wowtype_session_commit_composition(WowtypeSession *session, WowtypeEngineHandle *engine);
+
+/* 自上次调用以来要上屏的文字（可能是好几次上屏连在一起），没有时返回 NULL。取一次就清空。 */
+const char *wowtype_session_take_commit(WowtypeSession *session);
+
+/* 正在编辑时返回 1。 */
+int wowtype_session_is_composing(const WowtypeSession *session);
+
+/* 编辑区全文（UTF-8），没在编辑时是空串。前 plain_len 个字节是已选的词（不加下划线），
+ * 后面是还在打的拼音（加下划线）。cursor 是光标的字节位置。 */
+const char *wowtype_session_preedit(const WowtypeSession *session);
+size_t wowtype_session_preedit_plain_len(const WowtypeSession *session);
+size_t wowtype_session_preedit_cursor(const WowtypeSession *session);
+
+/* 候选框顶上的一行提示（以后的模式提示用），没有时是空串。 */
+const char *wowtype_session_aux(const WowtypeSession *session);
+
+/* 这一屏的候选。列表模式下一屏就是一页（PageSize 个）；按 Down 展开成网格后一屏最多 36 个、
+ * 每行 columns 个。text 是显示用的文字（换行画成 ⏎、制表符画成 ⇥），
+ * label 是选择键（"1"……"9"；网格里只有光标所在行有，其余是空串）。越界返回 NULL。 */
+size_t wowtype_session_candidate_count(const WowtypeSession *session);
+const char *wowtype_session_candidate_text(const WowtypeSession *session, size_t index);
+const char *wowtype_session_candidate_label(const WowtypeSession *session, size_t index);
+/* 高亮的候选在这一屏的位置；没有候选时返回 0。 */
+size_t wowtype_session_candidate_cursor(const WowtypeSession *session);
+/* 0 表示列表（横排还是竖排看 wowtype_session_vertical），大于 0 表示展开的网格每行几个。 */
+size_t wowtype_session_columns(const WowtypeSession *session);
+int wowtype_session_vertical(const WowtypeSession *session);
+int wowtype_session_has_prev_page(const WowtypeSession *session);
+int wowtype_session_has_next_page(const WowtypeSession *session);
+
+/* WOWTYPE_MODE_*。 */
+int wowtype_session_mode(const WowtypeSession *session);
+
+/* 学到的东西攒够了（每 20 次学习）时返回 1 并清零，前端这时把用户词库和输入习惯存盘
+ * （wowtype_engine_save_user_dict / wowtype_engine_save_history）。 */
+int wowtype_session_take_save_request(WowtypeSession *session);
+
+
 #ifdef __cplusplus
 }
 #endif

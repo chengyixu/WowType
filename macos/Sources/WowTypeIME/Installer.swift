@@ -1,7 +1,8 @@
 // 安装、注册、启用、选中输入源，卸载。
 //
 // - 装到 ~/Library/Input Methods（只给当前用户，不要管理员密码），先放好再替换，不删一半；
-// - 关掉正在运行的旧版本（按 bundle id 找，先 terminate，等一会儿再 forceTerminate）；
+// - 新文件换好之后再关掉正在运行的旧版本（按 bundle id 找，先 terminate，等一会儿再 forceTerminate）；
+//   顺序见 BundleInstaller.installSteps；
 // - 注册后重新查一遍，查不到就报错（McBopomofo）；
 // - 启用不先看「是否已启用」：macOS 12 起这个属性可能是假的（McBopomofo）；
 // - 选中只在已启用、可选、还没选中时做（鼠须管）。
@@ -48,16 +49,18 @@ enum Installer {
         let id = try bundleID()
         let here = Bundle.main.bundleURL
         var target = here
-        if !BundleInstaller.isInside(here, directory: inputMethodsDirectory) {
-            quitRunning(bundleID: id)
-            target = try BundleInstaller.install(source: here, into: inputMethodsDirectory)
-            Log.install.notice("已复制到 \(target.path, privacy: .public)")
-        } else {
-            quitRunning(bundleID: id)
+        let inPlace = BundleInstaller.isInside(here, directory: inputMethodsDirectory)
+        for step in BundleInstaller.installSteps(alreadyInPlace: inPlace) {
+            switch step {
+            case .copy:
+                target = try BundleInstaller.install(source: here, into: inputMethodsDirectory)
+                Log.install.notice("已复制到 \(target.path, privacy: .public)")
+            case .quitRunning: quitRunning(bundleID: id)
+            case .register: try register(at: target, bundleID: id)
+            case .enable: try enable(bundleID: id)
+            case .select: try select(bundleID: id)
+            }
         }
-        try register(at: target, bundleID: id)
-        try enable(bundleID: id)
-        try select(bundleID: id)
     }
 
     /// 停用输入源、关掉进程、删掉 ~/Library/Input Methods/WowType.app。用户数据不动。

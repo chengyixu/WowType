@@ -143,6 +143,14 @@ struct BundleInstallerTests {
         #expect(!BundleInstaller.isInside(root.appendingPathComponent("WowType.app"), directory: target))
     }
 
+    @Test func oldProcessesAreQuitAfterTheNewBundleIsInPlace() {
+        // 先关旧进程再复制的话，系统会在复制的这段时间里从还没换的旧 .app 再把旧版本启动起来。
+        #expect(BundleInstaller.installSteps(alreadyInPlace: false)
+            == [.copy, .quitRunning, .register, .enable, .select])
+        #expect(BundleInstaller.installSteps(alreadyInPlace: true)
+            == [.quitRunning, .register, .enable, .select])
+    }
+
     @Test func uninstallRemovesOnlyTheBundle() throws {
         let root = try tempDir()
         let target = root.appendingPathComponent("IM", isDirectory: true)

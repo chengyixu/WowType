@@ -124,7 +124,7 @@ struct SettingsStoreTests {
         defer { store.stopWatching() }
         try store.write("A=9\n")
         try await Task.sleep(nanoseconds: 400_000_000)
-        #expect(seen.all.isEmpty)
+        #expect(seen.all == [])
     }
 }
 

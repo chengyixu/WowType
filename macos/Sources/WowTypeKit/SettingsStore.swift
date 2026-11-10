@@ -12,6 +12,8 @@ public final class SettingsStore: @unchecked Sendable {
 
     private let lock = NSLock()
     private var lastText: String?
+    /// 正在写入的内容（write 还没返回）。
+    private var pendingOwn: String?
     private var queue: DispatchQueue?
     private var onChange: (@Sendable (String) -> Void)?
     private var dirSource: DispatchSourceFileSystemObject?
@@ -39,10 +41,23 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     public func write(_ text: String) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try Data(text.utf8).write(to: fileURL, options: .atomic)
+        // 写的过程中监视回调可能在别的队列上读到旧内容（原子写先在同一目录建临时文件）或新内容，
+        // 两种都不算别人改的：旧的是 lastText，新的先记在 pendingOwn。
+        lock.lock()
+        pendingOwn = text
+        lock.unlock()
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: fileURL, options: .atomic)
+        } catch {
+            lock.lock()
+            pendingOwn = nil
+            lock.unlock()
+            throw error
+        }
         lock.lock()
         lastText = text
+        pendingOwn = nil
         lock.unlock()
         // 原子写换掉了文件，文件那一路要重新挂。
         rearmFileSource()
@@ -115,10 +130,12 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     private func check() {
-        guard let text = read() else { return }
+        // 读文件和比较要在同一把锁里：先读后锁的话，可能读到旧内容，等拿到锁时 write 已经写完，
+        // 旧内容就被当成了别人的改动。
         lock.lock()
-        let changed = text != lastText
-        if changed { lastText = text }
+        guard let text = read() else { lock.unlock(); return }
+        let changed = text != lastText && text != pendingOwn
+        if changed || text == pendingOwn { lastText = text }
         let callback = onChange
         lock.unlock()
         if changed { callback?(text) }

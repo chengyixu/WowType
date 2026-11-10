@@ -84,12 +84,12 @@ fn ini_syntax() {
     // 同一个键写两次，后面的算数
     assert_eq!(config::parse("PageSize=4\nPageSize=6\n").0.page_size, 6);
     // CRLF 也行
-    assert_eq!(config::parse("PageSize=4\r\nFuzzy=True\r\n"), {
-        let mut c = Config::default();
-        c.page_size = 4;
-        c.fuzzy = true;
-        (c, 0)
-    });
+    let want = Config {
+        page_size: 4,
+        fuzzy: true,
+        ..Config::default()
+    };
+    assert_eq!(config::parse("PageSize=4\r\nFuzzy=True\r\n"), (want, 0));
     // fcitx 写字符串时可能加引号
     assert_eq!(
         config::parse("TranslateBaseUrl=\"http://a b/v1\"\n")

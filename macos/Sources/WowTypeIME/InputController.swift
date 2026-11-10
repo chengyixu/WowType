@@ -54,6 +54,7 @@ final class WowTypeInputController: IMKInputController {
             self.ensureSession().reset()
             self.lastMarked = nil
             CandidatePanel.shared.hide(owner: self)
+            self.saveIfRequested()
         }
     }
 
@@ -62,7 +63,6 @@ final class WowTypeInputController: IMKInputController {
         mainSync {
             self.bind(sender.value)
             self.finishComposition()
-            IMEApp.shared.store.save()
             self.boundClient = nil
         }
     }
@@ -140,6 +140,14 @@ final class WowTypeInputController: IMKInputController {
         if let text = session.takeCommit() { insert(text) }
         lastMarked = nil
         CandidatePanel.shared.hide(owner: self)
+        saveIfRequested()
+    }
+
+    /// 会话说该存盘时（每 20 次学习，或失去焦点、切换输入法时还有没存的学习）才存盘。
+    private func saveIfRequested() {
+        if ensureSession().takeSaveRequest() {
+            IMEApp.shared.store.save()
+        }
     }
 
     /// 把会话的输出交给应用和候选框。
@@ -151,9 +159,7 @@ final class WowTypeInputController: IMKInputController {
         let snap = session.snapshot()
         updateMarkedText(snap)
         updatePanel(snap)
-        if session.takeSaveRequest() {
-            IMEApp.shared.store.save()
-        }
+        saveIfRequested()
     }
 
     private func insert(_ text: String) {

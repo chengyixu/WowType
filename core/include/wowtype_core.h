@@ -352,6 +352,10 @@ int wowtype_session_configure(WowtypeSession *session, const char *ini_text);
 int wowtype_session_process_key(WowtypeSession *session, WowtypeEngineHandle *engine,
                                 const WowtypeKeyEvent *event);
 
+/* 重新算候选：词库刚载入完（engine 从 NULL 变成可用）或改了设置之后调一次。
+ * 没在编辑时什么也不做。 */
+void wowtype_session_refresh(WowtypeSession *session, WowtypeEngineHandle *engine);
+
 /* 鼠标点选这一屏的第 index 个候选（和按对应数字键一样）。返回 1 成功，0 没有这个候选。 */
 int wowtype_session_select(WowtypeSession *session, WowtypeEngineHandle *engine, size_t index);
 

@@ -161,3 +161,16 @@ struct BundleInstallerTests {
         #expect(try BundleInstaller.uninstall(from: target) == false)
     }
 }
+
+@Suite("安装：选中等待批准")
+struct SelectApprovalTests {
+    @Test func paramErrMeansNeedsApproval() {
+        #expect(BundleInstaller.selectStatusNeedsApproval(-50))
+    }
+
+    @Test func otherStatusesAreFailuresNotApproval() {
+        #expect(!BundleInstaller.selectStatusNeedsApproval(0))
+        #expect(!BundleInstaller.selectStatusNeedsApproval(-108))
+        #expect(!BundleInstaller.selectStatusNeedsApproval(1))
+    }
+}

@@ -15,12 +15,16 @@ enum Installer {
         case notRegistered(String)
         case tis(String, OSStatus)
         case noBundleID
+        /// 输入法装好也启用了，但 macOS 在等用户在系统设置里批准，还没法自动选中。
+        case needsApproval(String)
 
         var description: String {
             switch self {
             case .notRegistered(let id): return "注册后找不到输入源 \(id)"
             case .tis(let what, let status): return "\(what) 失败（OSStatus \(status)）"
             case .noBundleID: return "程序没有 bundle id"
+            case .needsApproval(let id):
+                return "已安装并启用，但系统在等批准：打开 系统设置 › 键盘 › 文本输入（或点输入菜单里的「键盘设置…」），在提示里点「允许 WowType 启用 WowType Pinyin」；批准后从输入菜单选 WowType 就行。\(id)"
             }
         }
     }
@@ -58,7 +62,14 @@ enum Installer {
             case .quitRunning: quitRunning(bundleID: id)
             case .register: try register(at: target, bundleID: id)
             case .enable: try enable(bundleID: id)
-            case .select: try select(bundleID: id)
+            case .select:
+                do { try select(bundleID: id) }
+                catch Failure.needsApproval(let sourceID) {
+                    // 装好了、也启用了，只差用户在系统设置里批准（2026-11 首次安装实测）。
+                    // 安装本身算成功；把该做什么告诉用户，别让 --install 报「安装失败」。
+                    Log.install.notice("等待批准：\(sourceID, privacy: .private)")
+                    FileHandle.standardOutput.write(Data("WowType：\(Failure.needsApproval(sourceID).description)\n".utf8))
+                }
             }
         }
     }
@@ -97,7 +108,10 @@ enum Installer {
               bool(source, kTISPropertyInputSourceIsSelectCapable),
               !bool(source, kTISPropertyInputSourceIsSelected) else { return }
         let status = TISSelectInputSource(source)
-        guard status == noErr else { throw Failure.tis("TISSelectInputSource", status) }
+        guard status == noErr else {
+            if BundleInstaller.selectStatusNeedsApproval(status) { throw Failure.needsApproval(modeID(id)) }
+            throw Failure.tis("TISSelectInputSource", status)
+        }
     }
 
     /// 关掉别的同 bundle id 的进程（不含自己）。

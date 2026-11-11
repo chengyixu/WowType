@@ -30,6 +30,11 @@ public enum BundleInstaller {
         (alreadyInPlace ? [] : [.copy]) + [.quitRunning, .register, .enable, .select]
     }
 
+    /// TISSelectInputSource 返回 -50（paramErr）：macOS 在等用户在系统设置里批准这个输入法
+    /// （「允许 WowType 启用 WowType Pinyin？」）。这不是安装失败：装好了、启用了，只差用户点允许。
+    /// 2026-11 首次安装实测：没批准时 select 就是 -50，批准后立刻可以选中。
+    public static func selectStatusNeedsApproval(_ status: Int32) -> Bool { status == -50 }
+
     /// 装到 directory 里，返回装好的位置。
     @discardableResult
     public static func install(source: URL, into directory: URL) throws -> URL {

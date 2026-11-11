@@ -59,6 +59,8 @@ librime（鼠须管、小狼毫、ibus-rime 共用）和 Mozc 都是这么分的
 
 安装：下载的 DMG 里只有 `WowType.app`。双击它会出一个安装窗口，点「安装」后它把自己复制到
 `~/Library/Input Methods/`，关掉正在运行的旧版本，向系统注册并启用输入源。
+第一次装时 macOS 会在系统设置里问「允许 WowType 启用 WowType Pinyin」，点了「允许」才能自动选中；
+没批准前安装仍然成功，只是要手动点允许、再从输入菜单选 WowType。
 命令行也能做：`WowType.app/Contents/MacOS/WowType --install`、`--uninstall`。
 不用 .pkg，所以不需要「Developer ID Installer」证书，也不用注销重新登录。
 

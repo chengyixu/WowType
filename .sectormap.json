@@ -1,0 +1,38 @@
+{
+  "label": "WowType (拼音输入法 · Rust core + fcitx5 C++ / macOS Swift front ends)",
+  "lang": "rust",
+  "git_root": ".",
+  "src_base": "",
+  "test_base": "",
+  "import_prefix": "",
+  "resolve": "kt_pkg",
+  "catalog_project": "wowtype",
+  "deploy_symlinks": false,
+  "sectors": [
+    {"id": "core", "root": "core"},
+    {"id": "voice", "root": "voice"},
+    {"id": "voice-daemon", "root": "voice-daemon"},
+    {"id": "fcitx5-addon", "root": "fcitx5-addon"},
+    {"id": "macos", "root": "macos"},
+    {"id": "tools", "root": "tools"},
+    {"id": "scripts", "root": "scripts"}
+  ],
+  "behavior": [
+    ["privacy:\\s*\\.public", "⚠ typed text must never reach the public unified log — guards.sh public-text allowlist"],
+    ["wowtype_core\\.h", "C ABI contract header — front ends depend on the contract, not on core internals"],
+    ["catch_unwind", "panic containment at the FFI boundary (session_ffi)"],
+    ["unimplemented!\\(|todo!\\(|FIXME", "⚠ unfinished marker"],
+    ["unsafe\\s*\\{", "⚠ unsafe block — review at the FFI boundary"],
+    ["TISRegisterInputSource|TISEnableInputSource|TISSelectInputSource", "input source registration stays in the installer path"]
+  ],
+  "boundaries_global": [
+    "Linux (fcitx5-addon) and macOS share core/src/session.rs and core/src/config.rs — one source of truth; the fcitx5 C++ session is the behavior spec until it migrates to the session ABI",
+    "C ABI in core/include/wowtype_core.h is additive only; scripts/abi-smoke.sh gates header↔dylib symbol drift",
+    "No declared contextmap edges: the macos↔core and fcitx5↔core boundaries are C ABI + module map, invisible to the language parser — declaring them would produce false stale-declaration findings"
+  ],
+  "boundaries_by_sector": {
+    "core": ["Strings returned by wowtype_session_* stay valid until the next state-changing call on the same session; sessions are single-threaded"],
+    "macos": ["InputMethodKit/TIS glue only; no network (translation not wired); core built --no-default-features (no voice, no microphone entitlement); ~/Library/Caches/<bundle id>/ for the lexicon snapshot"],
+    "fcitx5-addon": ["fcitx5 >= 5.1; test/key_harness.cpp is the behavior spec mirrored by core/tests/session_keys.rs"]
+  }
+}

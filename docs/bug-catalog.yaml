@@ -1,0 +1,48 @@
+# WowType bug 目录：已经修掉的回归型 bug，每个都有症状、修它的提交、能防再犯的信号。
+# 新 bug 修完后往这里加一条；有 lint 正则的，同时收进 macos/scripts/guards.sh。
+projects:
+  wowtype:
+    entries:
+      - id: macos-sha256sum-portable
+        symptom: "macOS 自带 sha256sum（Darwin 1.0）不认 --quiet，make-data.sh 误报「words.lm 的 sha256 对不上」，SOURCE.txt 和 VERSION 都没生成。"
+        fix_commit: 00a37a3
+        files: [scripts/make-data.sh]
+        lint: "sha256sum -c --quiet"   # GNU 专属选项；改为算出哈希直接比较
+        observable_signal: "macOS 上跑 make-data.sh 应正常生成 SOURCE.txt/VERSION，而非报哈希不对"
+
+      - id: settings-store-own-write-race
+        symptom: "设置文件监视把自己的原子写入当成别人改的（ownWriteDoesNotNotify 13 次里 2 次失败）：临时文件先触发目录监视、lastText 还没更新，check() 又没拿锁就读。"
+        fix_commit: 7fa3a5c
+        files: [macos/Sources/WowTypeKit/SettingsStore.swift]
+        observable_signal: "ownWriteDoesNotNotify 连续 60 次全过；设置窗口保存后不弹「文件被外部修改」"
+
+      - id: session-ffi-string-store-uaf
+        symptom: "会话 C ABI 的字符串仓库在第 1024 次只读调用后被整体清空，之前交给 C 的指针变成悬空（ASan use-after-free）。"
+        fix_commit: 5bc94ab
+        files: [core/src/session_ffi.rs]
+        lint: "strings.clear()"        # 状态没变时绝不释放已给出的字符串
+        observable_signal: "many_reads_keep_earlier_strings 测试过；ASan 复现程序无报告"
+
+      - id: keypad-digits-passed-through
+        symptom: "编辑中小键盘数字被交给应用而不是选词；fcitx 里 Key::isDigit 包含 KP_0..KP_9。"
+        fix_commit: d63cec4
+        files: [core/src/session.rs]
+        observable_signal: "session_keys 的 keypad 测试：小键盘 2 选第 2 个候选，0 被吞掉"
+
+      - id: settings-window-clobbers-conf
+        symptom: "安全模式下设置窗口用默认值覆盖用户的 wowtype.conf；或拿创建窗口时的旧副本保存，冲掉后来的手改。"
+        fix_commit: 4524320
+        files: [macos/Sources/WowTypeIME/SettingsWindow.swift]
+        observable_signal: "SettingsEditorTests：safeMode 只读不写；每次 set 从文件当前内容出发"
+
+      - id: installer-quit-before-swap
+        symptom: "安装时先关旧进程再换文件：复制和替换的一秒里系统按需从旧 .app 再启动旧版本，用户升级后还在用旧的。"
+        fix_commit: dbbef4e
+        files: [macos/Sources/WowTypeIME/Installer.swift]
+        observable_signal: "installSteps(alreadyInPlace: false) == [.copy, .quitRunning, .register, .enable, .select]"
+
+      - id: first-install-needs-approval
+        symptom: "第一次装 macOS 在系统设置里问「允许 WowType 启用 WowType Pinyin」之前，TISSelectInputSource 一直返回 -50；安装程序把它当失败退出 1。"
+        fix_commit: fb1361a
+        files: [macos/Sources/WowTypeIME/Installer.swift, macos/Sources/WowTypeKit/BundleInstaller.swift]
+        observable_signal: "--install 未批准时输出「去系统设置点允许」并以 0 退出；批准后立刻可选中"

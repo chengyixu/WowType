@@ -3,7 +3,8 @@
 <!--
   WowType.app 的 Info.plist 模板。build.sh 替换两个参数后写进 .app：
     @BUNDLE_ID@  输入法的 bundle id（WOWTYPE_BUNDLE_ID，要含 .inputmethod.）
-    @VERSION@    core/Cargo.toml 里的版本
+    @VERSION@    core/Cargo.toml 里的版本（发布时可以用 WOWTYPE_VERSION 换掉）
+  在线更新的键（SUFeedURL、SUPublicEDKey……）不在模板里：发布方给了更新源，build.sh 才加。
   唯一的输入模式是拼音，id 为 @BUNDLE_ID@.pinyin（和 Installer.modeID 同一规则）。
   输入模式的写法参考鼠须管（Squirrel）和 vChewing。
 -->

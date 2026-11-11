@@ -10,17 +10,27 @@ let imeTargets: [Target] = coreLib.map { lib in
     [
         .executableTarget(
             name: "WowTypeIME",
-            dependencies: ["WowTypeKit", "WowTypeEngine", "CObjCSafe"],
+            dependencies: [
+                "WowTypeKit", "WowTypeEngine", "CObjCSafe",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/WowTypeIME",
             swiftSettings: [.defaultIsolation(MainActor.self)],
             linkerSettings: [
                 .linkedFramework("InputMethodKit"),
                 .linkedFramework("Carbon"),
-                .unsafeFlags([lib]),
+                // Sparkle.framework 由 build.sh 放进 Contents/Frameworks
+                .unsafeFlags([lib, "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
         ),
     ]
 } ?? []
+
+// 在线更新用 Sparkle 2（EdDSA 签名的更新源，见 docs/MACOS.md「在线更新」）。只有输入法程序要它，
+// 所以也只在声明输入法程序时依赖它：swift test 不用下载 Sparkle。
+let imeDependencies: [Package.Dependency] = coreLib == nil ? [] : [
+    .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
+]
 
 let package = Package(
     name: "WowType",
@@ -28,6 +38,7 @@ let package = Package(
     products: coreLib == nil ? [] : [
         .executable(name: "WowType", targets: ["WowTypeIME"]),
     ],
+    dependencies: imeDependencies,
     targets: imeTargets + [
         // 把 core/include/wowtype_core.h 交给 Swift（只引用，不复制）。
         // 不在这里写 link：静态库按完整路径链接（见上面的 WOWTYPE_CORE_LIB）。

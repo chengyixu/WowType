@@ -1,4 +1,4 @@
-// 输入法菜单（菜单栏输入法图标下）：设置、编辑自定义词、打开数据文件夹、关于。
+// 输入法菜单（菜单栏输入法图标下）：设置、编辑自定义词、打开数据文件夹、检查更新（配了在线更新才有）、关于。
 import AppKit
 
 @MainActor
@@ -9,6 +9,12 @@ enum AppMenu {
         menu.addItem(item("编辑自定义词…", #selector(MenuActions.editCustomWords(_:))))
         menu.addItem(item("打开数据文件夹", #selector(MenuActions.openDataFolder(_:))))
         menu.addItem(.separator())
+        if let updater = Updater.shared {
+            let title = updater.pendingVersion.map { "安装新版本 \($0)…" } ?? "检查更新…"
+            let update = item(title, #selector(MenuActions.checkForUpdates(_:)))
+            update.isEnabled = updater.canCheckForUpdates
+            menu.addItem(update)
+        }
         menu.addItem(item("关于 WowType", #selector(MenuActions.about(_:))))
         return menu
     }
@@ -44,6 +50,10 @@ final class MenuActions: NSObject {
         let dir = IMEApp.shared.paths.support
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         NSWorkspace.shared.open(dir)
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        Updater.shared?.checkForUpdates()
     }
 
     @objc func about(_ sender: Any?) {

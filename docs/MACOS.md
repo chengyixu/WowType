@@ -92,8 +92,41 @@ macos/scripts/build.sh --install        # 再装到 ~/Library/Input Methods 并�
 | `WOWTYPE_BUNDLE_ID` | 输入法的 bundle id，要含 `.inputmethod.` | `io.github.gloridust.inputmethod.WowType` |
 | `WOWTYPE_SIGN_IDENTITY` | `codesign` 身份，如 `Developer ID Application: …` | `-`（临时签名，只能本机用） |
 | `WOWTYPE_NOTARY_PROFILE` | `xcrun notarytool` 的钥匙串配置名，设了才公证 | 不公证 |
+| `WOWTYPE_VERSION` | 版本号 `x.y.z`，在线更新按它比新旧 | `core/Cargo.toml` 的版本 |
+| `WOWTYPE_UPDATE_FEED_URL` | 在线更新源（Sparkle appcast，必须 https） | 没有在线更新 |
+| `WOWTYPE_UPDATE_PUBLIC_KEY` | 更新包签名的 EdDSA 公钥（base64） | 没有在线更新 |
 
 `macos/scripts/package.sh` 打 DMG：签名（hardened runtime）、公证、装订，最后用 `spctl` 确认 Gatekeeper 接受。
+
+## 在线更新
+
+用 [Sparkle 2](https://sparkle-project.org)（Squirrel 等 macOS 输入法也用它），`Package.swift` 钉在一个确切版本，
+`build.sh` 把 `Sparkle.framework` 放进 `Contents/Frameworks`，从里往外用同一个身份签名。
+
+- **默认没有。** 更新源和公钥属于发布方，仓库里不写；不给 `WOWTYPE_UPDATE_FEED_URL` 和
+  `WOWTYPE_UPDATE_PUBLIC_KEY` 时 Info.plist 里没有 `SUFeedURL`，输入法不启动更新器，菜单里也没有「检查更新…」。
+  两个要么都给、要么都不给，更新源只认 https，公钥必须是 32 字节（`build.sh` 和 `UpdateConfig` 都查）。
+- **每天查一次**（`SUScheduledCheckInterval` = 86400），不上报系统信息（`SUEnableSystemProfiling` = false）。
+- **不抢焦点。** 输入法是后台程序，定时查到新版本时用 Sparkle 的「温和提醒」：只在刚启动这类 Sparkle 认为
+  可以马上显示的时候弹窗，别的时候只把菜单那一项换成「安装新版本 x…」，用户点了才把窗口放到前面。
+- **验证。** 更新包要通过 EdDSA 签名检查，Sparkle 还要求新旧两版是同一个开发者签名；装到
+  `~/Library/Input Methods`（归当前用户，不要管理员密码）后重启输入法进程。
+
+发布一个带在线更新的版本：
+
+```bash
+# 只做一次：生成发布方自己的 EdDSA 密钥（私钥存进登录钥匙串，--account 和别的项目分开）
+SPARKLE_BIN=macos/build/swift-arm64/artifacts/sparkle/Sparkle/bin
+$SPARKLE_BIN/generate_keys --account <账户名>        # 打出公钥
+$SPARKLE_BIN/generate_keys --account <账户名> -x <备份文件>   # 备份私钥：丢了以后就没法给已装的用户推更新
+
+WOWTYPE_SIGN_IDENTITY=… WOWTYPE_UPDATE_FEED_URL=https://…/appcast.xml WOWTYPE_UPDATE_PUBLIC_KEY=… \
+  macos/scripts/build.sh && WOWTYPE_SIGN_IDENTITY=… WOWTYPE_NOTARY_PROFILE=… macos/scripts/package.sh
+$SPARKLE_BIN/sign_update --account <账户名> macos/build/WowType-<版本>.dmg   # 打出 sparkle:edSignature 和 length
+```
+
+把公证、装订过的 DMG 放到更新源写的地址，再把 `sign_update` 打出的签名和长度写进 appcast 的 `<enclosure>`
+（Sparkle 的 `generate_appcast` 也能直接生成 appcast）。装订会改 DMG，所以一定先装订、再 `sign_update`。
 
 ## 以后
 

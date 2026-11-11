@@ -67,6 +67,8 @@ final class IMEApp {
         let app = IMEApp(bundleID: bundleID, paths: paths, safeMode: safeMode, server: server)
         shared = app
         app.startEngine()
+        // 安全模式也查更新：修崩溃的新版本正要靠它装上
+        Updater.startIfConfigured(bundle: bundle)
     }
 
     private func startEngine() {

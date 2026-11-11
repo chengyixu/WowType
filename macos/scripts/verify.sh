@@ -25,6 +25,7 @@ echo "==> 4/5 swift test"
 # 这里单独编一遍，输入法程序里写错了也能查出来。--target 只编译这个模块、不链接，
 # 所以用上一步 abi-smoke.sh 编好的核心静态库就行；链接和组装 .app 由 build.sh 做。
 # 编译目录放在 build/ 下，不和 swift test 的 .build 混用（两边的包声明不一样）。
+# 输入法程序依赖 Sparkle（在线更新），第一次编要从 GitHub 下载 Package.swift 里钉住的那个版本。
 echo "==> 5/5 编译输入法程序"
 CORE_LIB=$PWD/target/release/libwowtype_core.a
 [[ -f "$CORE_LIB" ]] || { echo "verify.sh：没有 $CORE_LIB" >&2; exit 1; }
